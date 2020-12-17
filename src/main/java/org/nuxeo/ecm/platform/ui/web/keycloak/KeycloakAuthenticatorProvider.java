@@ -28,6 +28,7 @@ import org.keycloak.adapters.KeycloakDeployment;
 import org.keycloak.adapters.NodesRegistrationManagement;
 import org.keycloak.adapters.tomcat.CatalinaHttpFacade;
 import org.nuxeo.ecm.platform.ui.web.auth.LoginScreenHelper;
+import org.nuxeo.ecm.platform.ui.web.util.BaseURL;
 
 /**
  * @since 7.4
@@ -89,7 +90,9 @@ public class KeycloakAuthenticatorProvider {
         String serverName = request.getServerName();
         int serverPort = request.getServerPort();
         String contextPath = request.getContextPath();
-        return scheme + "://" + serverName + ":" + serverPort + contextPath + "/"
+        return BaseURL.getBaseURL(request) + contextPath + "/"
                 + LoginScreenHelper.getStartupPagePath();
+//        return scheme + "://" + serverName + ":" + serverPort + contextPath + "/"
+//                + LoginScreenHelper.getStartupPagePath();
     }
 }

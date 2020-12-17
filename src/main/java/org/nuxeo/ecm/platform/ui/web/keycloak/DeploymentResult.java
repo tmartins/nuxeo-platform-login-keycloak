@@ -21,6 +21,7 @@ package org.nuxeo.ecm.platform.ui.web.keycloak;
 
 import java.lang.reflect.Field;
 
+import javax.servlet.ServletRequestWrapper;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
@@ -68,8 +69,8 @@ public class DeploymentResult {
 
     public DeploymentResult invokeOn(AdapterDeploymentContext deploymentContext) {
 
-        // In Tomcat, a HttpServletRequest and a HttpServletResponse are wrapped in a Facades
-        request = unwrapRequest((RequestFacade) httpServletRequest);
+        // In Tomcat, a HttpServletRequest and a HttpServletResponse are wrapped in a Facades or ApplicationHttpRequest
+        request = unwrapRequest(httpServletRequest);
         facade = new CatalinaHttpFacade(httpServletResponse, request);
 
         if (keycloakDeployment == null) {
@@ -97,5 +98,23 @@ public class DeploymentResult {
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    private Request unwrapRequest(HttpServletRequest httpRequest) {
+        if (httpRequest instanceof RequestFacade) {
+            return unwrapRequest((RequestFacade) httpRequest);
+        }
+        if (httpRequest instanceof ServletRequestWrapper) {
+            Field f;
+            try {
+                f = ServletRequestWrapper.class.getDeclaredField("request");
+                f.setAccessible(true); // grant access to (protected) field
+                RequestFacade facade = (RequestFacade) f.get(httpRequest);
+                return unwrapRequest(facade);
+            } catch (NoSuchFieldException | SecurityException | IllegalArgumentException | IllegalAccessException e) {
+                throw new RuntimeException(e);
+            }
+        }
+        throw new RuntimeException("Non supported object to unwrap the request:" + httpRequest);
     }
 }
