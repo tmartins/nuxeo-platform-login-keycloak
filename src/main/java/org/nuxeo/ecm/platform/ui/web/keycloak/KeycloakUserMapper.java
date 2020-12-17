@@ -130,7 +130,7 @@ public class KeycloakUserMapper implements UserMapper {
         try {
             DocumentModel userDoc = userManager.getBareUserModel();
             userDoc.setPropertyValue(userManager.getUserIdField(), userInfo.getUserName());
-            userDoc.setPropertyValue(userManager.getUserEmailField(), userInfo.getUserName());
+            userDoc.setPropertyValue(userManager.getUserEmailField(), userInfo.getEmail());
             return userManager.createUser(userDoc);
         } catch (NuxeoException e) {
             String message = "Error while creating user [" + userInfo.getUserName() + "] in UserManager";
@@ -141,7 +141,7 @@ public class KeycloakUserMapper implements UserMapper {
 
     private void updateUser(DocumentModel userDoc, KeycloakUserInfo userInfo) {
         userDoc.setPropertyValue(userManager.getUserIdField(), userInfo.getUserName());
-        userDoc.setPropertyValue(userManager.getUserEmailField(), userInfo.getUserName());
+        userDoc.setPropertyValue(userManager.getUserEmailField(), userInfo.getEmail());
         userDoc.setProperty(userSchemaName, "firstName", userInfo.getFirstName());
         userDoc.setProperty(userSchemaName, "lastName", userInfo.getLastName());
         userDoc.setProperty(userSchemaName, "password", userInfo.getPassword());

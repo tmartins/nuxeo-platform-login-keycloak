@@ -156,10 +156,11 @@ public class KeycloakAuthenticationPlugin implements NuxeoAuthenticationPlugin,
     private KeycloakUserInfo getKeycloakUserInfo(AccessToken token) {
         return aKeycloakUserInfo()
         // Required
-        .withUserName(token.getEmail())
+        .withUserName(token.getPreferredUsername())
+        .withEmail(token.getEmail())
         // Optional
         .withFirstName(token.getGivenName()).withLastName(token.getFamilyName()).withCompany(
-                token.getPreferredUsername()).withAuthPluginName("KEYCLOAK_AUTH")
+                token.getZoneinfo()).withAuthPluginName("KEYCLOAK_AUTH")
         // The password is randomly generated has we won't use it
         .withPassword(UUID.randomUUID().toString()).build();
     }

@@ -37,6 +37,8 @@ public class KeycloakUserInfo extends UserIdentificationInfo {
 
     protected String company;
 
+    protected String email;
+
     protected Set<String> roles;
 
     private KeycloakUserInfo(String emailAsUserName, String password) {
@@ -44,12 +46,17 @@ public class KeycloakUserInfo extends UserIdentificationInfo {
     }
 
     public KeycloakUserInfo(String emailAsUserName, String password, String firstName, String lastName, String company) {
-        super(emailAsUserName, password);
+        this(emailAsUserName, password, emailAsUserName, firstName, lastName, company);
+    }
 
-        if (emailAsUserName == null || StringUtils.isEmpty(emailAsUserName)) {
+    public KeycloakUserInfo(String userName, String password, String email, String firstName, String lastName, String company) {
+        super(userName, password);
+
+        if (userName == null || StringUtils.isEmpty(userName)) {
             throw new IllegalStateException("A valid username should always be provided");
         }
 
+        this.email = email;
         this.firstName = firstName;
         this.lastName = lastName;
         this.company = company;
@@ -61,6 +68,10 @@ public class KeycloakUserInfo extends UserIdentificationInfo {
 
     public String getLastName() {
         return lastName;
+    }
+
+    public String getEmail() {
+        return email;
     }
 
     public String getCompany() {
@@ -79,6 +90,8 @@ public class KeycloakUserInfo extends UserIdentificationInfo {
         protected String token;
 
         protected String userName;
+
+        protected String email;
 
         protected String password;
 
@@ -132,8 +145,13 @@ public class KeycloakUserInfo extends UserIdentificationInfo {
             return this;
         }
 
+        public KeycloakUserInfoBuilder withEmail(String email) {
+            this.email = email;
+            return this;
+        }
+
         public KeycloakUserInfo build() {
-            KeycloakUserInfo keycloakUserInfo = new KeycloakUserInfo(userName, password, firstName, lastName, company);
+            KeycloakUserInfo keycloakUserInfo = new KeycloakUserInfo(userName, password, email, firstName, lastName, company);
             keycloakUserInfo.setToken(token);
             keycloakUserInfo.setAuthPluginName(authPluginName);
             return keycloakUserInfo;
