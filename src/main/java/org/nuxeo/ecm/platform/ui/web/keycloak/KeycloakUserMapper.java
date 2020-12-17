@@ -28,6 +28,8 @@ import org.nuxeo.ecm.core.api.DocumentModel;
 import org.nuxeo.ecm.core.api.DocumentModelList;
 import org.nuxeo.ecm.core.api.NuxeoException;
 import org.nuxeo.ecm.core.api.NuxeoPrincipal;
+import org.nuxeo.ecm.core.cache.Cache;
+import org.nuxeo.ecm.core.cache.CacheService;
 import org.nuxeo.ecm.platform.api.login.UserIdentificationInfo;
 import org.nuxeo.ecm.platform.usermanager.UserManager;
 import org.nuxeo.runtime.api.Framework;
@@ -50,6 +52,8 @@ public class KeycloakUserMapper implements UserMapper {
 
     protected UserManager userManager;
 
+    private Cache keycloakCache;
+
     @Override
     public NuxeoPrincipal getOrCreateAndUpdateNuxeoPrincipal(Object userObject) {
         return getOrCreateAndUpdateNuxeoPrincipal(userObject, true, true, null);
@@ -60,6 +64,11 @@ public class KeycloakUserMapper implements UserMapper {
             Map<String, Serializable> params) {
         return  Framework.doPrivileged(() -> {
             KeycloakUserInfo userInfo = (KeycloakUserInfo) userObject;
+            String userId = userInfo.getUserName();
+            if (userId != null && keycloakCache.hasEntry(userId)) {
+                log.info(String.format("%s found in Keycloak cache", userId));
+                return userManager.getPrincipal(userId);
+            }
             for (String role : userInfo.getRoles()) {
                 findOrCreateGroup(role, userInfo.getUserName());
             }
@@ -72,16 +81,21 @@ public class KeycloakUserMapper implements UserMapper {
 
             updateUser(userDoc, userInfo);
 
-            String userId = (String) userDoc.getPropertyValue(userManager.getUserIdField());
-            return userManager.getPrincipal(userId);
+            userId = (String) userDoc.getPropertyValue(userManager.getUserIdField());
+            NuxeoPrincipal principal = userManager.getPrincipal(userId);
+            keycloakCache.put(userId, principal);
+            return principal;
         });
     }
 
+    @SuppressWarnings("deprecation")
     @Override
     public void init(Map<String, String> params) throws Exception {
         userManager = Framework.getService(UserManager.class);
         userSchemaName = userManager.getUserSchemaName();
         groupSchemaName = userManager.getGroupSchemaName();
+        CacheService cacheService = Framework.getService(CacheService.class);
+        keycloakCache = cacheService.getCache("keycloak");
     }
 
     private DocumentModel findOrCreateGroup(String role, String userName) {
