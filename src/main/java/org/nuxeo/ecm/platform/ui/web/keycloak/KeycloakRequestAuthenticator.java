@@ -31,12 +31,12 @@ import org.apache.catalina.realm.GenericPrincipal;
 import org.apache.tomcat.util.descriptor.web.LoginConfig;
 import org.keycloak.KeycloakPrincipal;
 import org.keycloak.adapters.AdapterTokenStore;
-import org.keycloak.adapters.spi.AuthChallenge;
-import org.keycloak.adapters.spi.AuthOutcome;
 import org.keycloak.adapters.KeycloakDeployment;
 import org.keycloak.adapters.OAuthRequestAuthenticator;
 import org.keycloak.adapters.RefreshableKeycloakSecurityContext;
 import org.keycloak.adapters.RequestAuthenticator;
+import org.keycloak.adapters.spi.AuthChallenge;
+import org.keycloak.adapters.spi.AuthOutcome;
 import org.keycloak.adapters.tomcat.CatalinaCookieTokenStore;
 import org.keycloak.adapters.tomcat.CatalinaHttpFacade;
 import org.keycloak.adapters.tomcat.CatalinaSessionTokenStore;
@@ -45,6 +45,7 @@ import org.keycloak.adapters.tomcat.GenericPrincipalFactory;
 import org.keycloak.adapters.tomcat.KeycloakAuthenticatorValve;
 import org.keycloak.enums.TokenStore;
 import org.keycloak.representations.AccessToken;
+import org.nuxeo.ecm.platform.web.common.vh.VirtualHostHelper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -147,7 +148,27 @@ public class KeycloakRequestAuthenticator extends RequestAuthenticator {
 
     @Override
     protected OAuthRequestAuthenticator createOAuthAuthenticator() {
-        return new OAuthRequestAuthenticator(this, facade, deployment, sslRedirectPort, tokenStore);
+        return new OAuthRequestAuthenticator(this, facade, deployment, sslRedirectPort, tokenStore) {
+
+            @Override
+            protected String getRequestUrl() {
+                final StringBuffer sb = new StringBuffer(VirtualHostHelper.getServerURL(request));
+                if (VirtualHostHelper.getServerURL(request).endsWith("/")) {
+                    sb.deleteCharAt(sb.length() - 1);
+                }
+                sb.append(request.getRequestURI());
+                if (request.getQueryString() != null) {
+                    sb.append("?");
+                    sb.append(request.getQueryString());
+                }
+                return sb.toString();
+            }
+
+            protected String stripOauthParametersFromRedirect() {
+                return super.stripOauthParametersFromRedirect().replace(VirtualHostHelper.getServerURL(request, true),
+                        VirtualHostHelper.getServerURL(request));
+            }
+        };
     }
 
     @Override
