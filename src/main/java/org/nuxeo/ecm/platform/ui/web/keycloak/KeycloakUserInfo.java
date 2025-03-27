@@ -37,19 +37,22 @@ public class KeycloakUserInfo extends UserIdentificationInfo {
 
     protected String company;
 
+    protected String email;
+
     protected Set<String> roles;
 
-    private KeycloakUserInfo(String emailAsUserName, String password) {
-        super(emailAsUserName, password);
-    }
-
     public KeycloakUserInfo(String emailAsUserName, String password, String firstName, String lastName, String company) {
-        super(emailAsUserName, password);
+        this(emailAsUserName, password, emailAsUserName, firstName, lastName, company);
+     }
 
-        if (emailAsUserName == null || StringUtils.isEmpty(emailAsUserName)) {
+    public KeycloakUserInfo(String userName, String password, String email, String firstName, String lastName, String company) {
+        super(userName, password);
+
+        if (userName == null || StringUtils.isEmpty(userName)) {
             throw new IllegalStateException("A valid username should always be provided");
         }
 
+        this.email = email;
         this.firstName = firstName;
         this.lastName = lastName;
         this.company = company;
@@ -67,6 +70,10 @@ public class KeycloakUserInfo extends UserIdentificationInfo {
         return company;
     }
 
+    public String getEmail() {
+       return email;
+    }
+
     public Set<String> getRoles() {
         return roles;
     }
@@ -80,9 +87,9 @@ public class KeycloakUserInfo extends UserIdentificationInfo {
 
         protected String userName;
 
-        protected String password;
+        protected String email;
 
-        protected String authPluginName;
+        protected String password;
 
         protected String company;
 
@@ -112,11 +119,6 @@ public class KeycloakUserInfo extends UserIdentificationInfo {
             return this;
         }
 
-        public KeycloakUserInfoBuilder withAuthPluginName(String authPluginName) {
-            this.authPluginName = authPluginName;
-            return this;
-        }
-
         public KeycloakUserInfoBuilder withCompany(String company) {
             this.company = company;
             return this;
@@ -132,10 +134,15 @@ public class KeycloakUserInfo extends UserIdentificationInfo {
             return this;
         }
 
+        public KeycloakUserInfoBuilder withEmail(String email) {
+            this.email = email;
+            return this;
+        }
+
         public KeycloakUserInfo build() {
-            KeycloakUserInfo keycloakUserInfo = new KeycloakUserInfo(userName, password, firstName, lastName, company);
+            KeycloakUserInfo keycloakUserInfo = new KeycloakUserInfo(userName, password, email, firstName, lastName, company);
+            keycloakUserInfo.setCredentialsChecked(true);
             keycloakUserInfo.setToken(token);
-            keycloakUserInfo.setAuthPluginName(authPluginName);
             return keycloakUserInfo;
         }
     }

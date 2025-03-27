@@ -28,6 +28,8 @@ import javax.servlet.http.HttpSession;
 import org.apache.catalina.authenticator.FormAuthenticator;
 import org.apache.catalina.connector.Request;
 import org.apache.catalina.realm.GenericPrincipal;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.tomcat.util.descriptor.web.LoginConfig;
 import org.keycloak.KeycloakPrincipal;
 import org.keycloak.adapters.AdapterTokenStore;
@@ -35,8 +37,8 @@ import org.keycloak.adapters.KeycloakDeployment;
 import org.keycloak.adapters.OAuthRequestAuthenticator;
 import org.keycloak.adapters.RefreshableKeycloakSecurityContext;
 import org.keycloak.adapters.RequestAuthenticator;
-import org.keycloak.adapters.spi.AuthChallenge;
 import org.keycloak.adapters.spi.AuthOutcome;
+import org.keycloak.adapters.spi.HttpFacade;
 import org.keycloak.adapters.tomcat.CatalinaCookieTokenStore;
 import org.keycloak.adapters.tomcat.CatalinaHttpFacade;
 import org.keycloak.adapters.tomcat.CatalinaSessionTokenStore;
@@ -46,16 +48,13 @@ import org.keycloak.adapters.tomcat.KeycloakAuthenticatorValve;
 import org.keycloak.enums.TokenStore;
 import org.keycloak.representations.AccessToken;
 import org.nuxeo.ecm.platform.web.common.vh.VirtualHostHelper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * @since 7.4
  */
-
 public class KeycloakRequestAuthenticator extends RequestAuthenticator {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(KeycloakRequestAuthenticator.class);
+    private static final Logger log = LogManager.getLogger(KeycloakRequestAuthenticator.class);
 
     public static final String KEYCLOAK_ACCESS_TOKEN = "KEYCLOAK_ACCESS_TOKEN";
 
@@ -66,6 +65,10 @@ public class KeycloakRequestAuthenticator extends RequestAuthenticator {
     protected HttpServletResponse response;
 
     protected LoginConfig loginConfig;
+
+    public HttpFacade getFacade() {
+        return facade;
+    }
 
     public KeycloakRequestAuthenticator(Request request, HttpServletResponse response, CatalinaHttpFacade facade,
             KeycloakDeployment deployment) {
@@ -82,22 +85,10 @@ public class KeycloakRequestAuthenticator extends RequestAuthenticator {
         if (outcome == AuthOutcome.AUTHENTICATED) {
             return AuthOutcome.AUTHENTICATED;
         }
-        AuthChallenge challenge = getChallenge();
-        if (challenge != null) {
-            if (loginConfig == null) {
-                loginConfig = request.getContext().getLoginConfig();
-            }
-            if (challenge.getResponseCode() >= 400) {
-                if (forwardToErrorPageInternal(request, response, loginConfig)) {
-                    return AuthOutcome.FAILED;
-                }
-            }
-            challenge.challenge(facade);
-        }
         return AuthOutcome.FAILED;
     }
 
-    protected boolean forwardToErrorPageInternal(Request request, HttpServletResponse response, Object loginConfig) {
+    protected boolean forwardToErrorPageInternal() {
         if (loginConfig == null) {
             return false;
         }
@@ -106,13 +97,14 @@ public class KeycloakRequestAuthenticator extends RequestAuthenticator {
             return false;
         }
         try {
+            // XXX buggy, this class doesn't extend FormAuthenticator
             Method method = FormAuthenticator.class.getDeclaredMethod("forwardToErrorPage", Request.class,
                     HttpServletResponse.class, LoginConfig.class);
             method.setAccessible(true);
             method.invoke(this, request, response, config);
         } catch (Exception e) {
             String message = "Error occurred during Keycloak authentication";
-            LOGGER.error(message, e);
+            log.error(message, e);
             throw new RuntimeException(message, e);
         }
         return true;
@@ -152,7 +144,7 @@ public class KeycloakRequestAuthenticator extends RequestAuthenticator {
 
             @Override
             protected String getRequestUrl() {
-                final StringBuffer sb = new StringBuffer(VirtualHostHelper.getServerURL(request));
+                final StringBuilder sb = new StringBuilder(VirtualHostHelper.getServerURL(request));
                 if (VirtualHostHelper.getServerURL(request).endsWith("/")) {
                     sb.deleteCharAt(sb.length() - 1);
                 }
@@ -164,6 +156,7 @@ public class KeycloakRequestAuthenticator extends RequestAuthenticator {
                 return sb.toString();
             }
 
+            @Override
             protected String stripOauthParametersFromRedirect() {
                 return super.stripOauthParametersFromRedirect().replace(VirtualHostHelper.getServerURL(request, true),
                         VirtualHostHelper.getServerURL(request));
@@ -178,7 +171,8 @@ public class KeycloakRequestAuthenticator extends RequestAuthenticator {
     }
 
     @Override
-    protected void completeBearerAuthentication(KeycloakPrincipal<RefreshableKeycloakSecurityContext> skp, String method) {
+    protected void completeBearerAuthentication(KeycloakPrincipal<RefreshableKeycloakSecurityContext> skp,
+            String method) {
         completeOAuthAuthentication(skp);
     }
 

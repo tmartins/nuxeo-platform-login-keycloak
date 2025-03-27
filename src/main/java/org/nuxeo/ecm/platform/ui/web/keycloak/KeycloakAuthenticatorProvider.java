@@ -1,5 +1,5 @@
 /*
- * (C) Copyright 2015 Nuxeo SA (http://nuxeo.com/) and others.
+ * (C) Copyright 2015-2024 Nuxeo SA (http://nuxeo.com/) and others.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,28 +19,72 @@
 
 package org.nuxeo.ecm.platform.ui.web.keycloak;
 
+import static org.apache.commons.lang3.StringUtils.isNotBlank;
+
+import java.io.IOException;
+import java.util.List;
+
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
 import org.apache.catalina.connector.Request;
+import org.apache.http.HttpHost;
+import org.apache.http.auth.AuthScope;
+import org.apache.http.auth.UsernamePasswordCredentials;
+import org.apache.http.client.entity.UrlEncodedFormEntity;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.impl.client.BasicCredentialsProvider;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClientBuilder;
+import org.apache.http.impl.conn.DefaultProxyRoutePlanner;
+import org.apache.http.message.BasicNameValuePair;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.keycloak.adapters.AdapterDeploymentContext;
 import org.keycloak.adapters.KeycloakDeployment;
 import org.keycloak.adapters.NodesRegistrationManagement;
 import org.keycloak.adapters.tomcat.CatalinaHttpFacade;
+import org.keycloak.common.util.KeycloakUriBuilder;
+import org.nuxeo.common.Environment;
 import org.nuxeo.ecm.platform.ui.web.auth.LoginScreenHelper;
-import org.nuxeo.ecm.platform.ui.web.util.BaseURL;
+import org.nuxeo.ecm.platform.web.common.vh.VirtualHostHelper;
+import org.nuxeo.runtime.api.Framework;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
  * @since 7.4
  */
-
 public class KeycloakAuthenticatorProvider {
 
-    private final NodesRegistrationManagement nodesRegistrationManagement = new NodesRegistrationManagement();
+    private static final Logger log = LogManager.getLogger(KeycloakAuthenticatorProvider.class);
 
-    private final AdapterDeploymentContext deploymentContext;
+    protected static final String CLIENT_ID_PARAM = "client_id";
 
-    private KeycloakDeployment resolvedDeployment;
+    protected static final String CLIENT_SECRET_PARAM = "client_secret";
+
+    protected static final String ID_TOKEN_HINT_PARAM = "id_token_hint";
+
+    protected static final String GRANT_TYPE_CLIENT_CREDENTIALS = "client_credentials";
+
+    protected static final String GRANT_TYPE_PARAM = "grant_type";
+
+    protected static final String RESOURCE_SECRET_KEY = "secret";
+
+    protected static final String POST_LOGOUT_REDIRECT_URI_PARAM = "post_logout_redirect_uri";
+
+    protected static final String SCOPE_PARAM = "scope";
+
+    protected static final String TOKEN_SCOPE_OPENID = "openid";
+
+    protected static final ObjectMapper mapper = new ObjectMapper();
+
+    protected final NodesRegistrationManagement nodesRegistrationManagement = new NodesRegistrationManagement();
+
+    protected final AdapterDeploymentContext deploymentContext;
+
+    protected KeycloakDeployment resolvedDeployment;
 
     public KeycloakAuthenticatorProvider(AdapterDeploymentContext deploymentContext) {
         this.deploymentContext = deploymentContext;
@@ -59,10 +103,8 @@ public class KeycloakAuthenticatorProvider {
         Request request = deploymentResult.getRequest();
         CatalinaHttpFacade facade = deploymentResult.getFacade();
 
-        // Register the deployment to refresh it
         nodesRegistrationManagement.tryRegister(resolvedDeployment);
 
-        // And return authenticator
         return new KeycloakRequestAuthenticator(request, httpServletResponse, facade, resolvedDeployment);
     }
 
@@ -73,26 +115,80 @@ public class KeycloakAuthenticatorProvider {
         if (!deploymentResult.isOk()) {
             return null;
         }
-
         resolvedDeployment = DeploymentResult.getKeycloakDeployment();
-        Request request = deploymentResult.getRequest();
-        String redirecResource = getRedirectResource(request);
 
-        return resolvedDeployment.getLogoutUrl().build().toString() + "?redirect_uri=" + redirecResource;
+        return getLogoutUri(deploymentResult.getRequest());
     }
 
     public KeycloakDeployment getResolvedDeployment() {
         return resolvedDeployment;
     }
 
-    private String getRedirectResource(Request request) {
-        String scheme = request.getScheme();
-        String serverName = request.getServerName();
-        int serverPort = request.getServerPort();
-        String contextPath = request.getContextPath();
-        return BaseURL.getBaseURL(request) + contextPath + "/"
-                + LoginScreenHelper.getStartupPagePath();
-//        return scheme + "://" + serverName + ":" + serverPort + contextPath + "/"
-//                + LoginScreenHelper.getStartupPagePath();
+    protected KeycloakUriBuilder logoutQueryParam(KeycloakUriBuilder builder, String redirectTo, String idTokenHint) {
+        return builder.replaceQueryParam(POST_LOGOUT_REDIRECT_URI_PARAM, redirectTo)
+                      .replaceQueryParam(ID_TOKEN_HINT_PARAM, idTokenHint);
+    }
+
+    protected String getLogoutUri(Request request) {
+        KeycloakUriBuilder builder = resolvedDeployment.getLogoutUrl();
+        String redirectTo = VirtualHostHelper.getBaseURL(request) + LoginScreenHelper.getStartupPagePath();
+        var secret = (String) resolvedDeployment.getResourceCredentials().get(RESOURCE_SECRET_KEY);
+        if (secret == null) {
+            String url = builder.replaceQueryParam(CLIENT_ID_PARAM, resolvedDeployment.getResourceName())
+                    .replaceQueryParam(POST_LOGOUT_REDIRECT_URI_PARAM, redirectTo)
+                    .build()
+                    .toString();
+            log.debug("url");
+            return url;
+        }
+        return logoutQueryParam(builder, redirectTo, getIdTokenHint()).build().toString();
+    }
+
+    protected String getIdTokenHint() {
+        var secret = (String) resolvedDeployment.getResourceCredentials().get(RESOURCE_SECRET_KEY);
+        var post = new HttpPost(resolvedDeployment.getTokenUrl());
+        var params = List.of( //
+                new BasicNameValuePair(CLIENT_ID_PARAM, resolvedDeployment.getResourceName()),
+                new BasicNameValuePair(CLIENT_SECRET_PARAM, secret),
+                new BasicNameValuePair(GRANT_TYPE_PARAM, GRANT_TYPE_CLIENT_CREDENTIALS),
+                new BasicNameValuePair(SCOPE_PARAM, TOKEN_SCOPE_OPENID));
+
+        try (CloseableHttpClient httpClient = buildHttpClient()) {
+            post.setEntity(new UrlEncodedFormEntity(params));
+            try (CloseableHttpResponse response = httpClient.execute(post)) {
+                var jsonToken = mapper.readValue(response.getEntity().getContent(), KeycloakToken.class);
+                return jsonToken.idToken();
+            }
+        } catch (IOException e) {
+            log.error("Error while fetching Keycloak id token hint: {}", e::getMessage);
+            log.debug(e, e);
+            return "";
+        }
+    }
+
+    protected CloseableHttpClient buildHttpClient() {
+        var builder = HttpClientBuilder.create();
+        configureProxy(builder);
+        return builder.build();
+    }
+
+    protected void configureProxy(HttpClientBuilder builder) {
+        var proxyHost = Framework.getProperty(Environment.NUXEO_HTTP_PROXY_HOST);
+        var proxyPort = Framework.getProperty(Environment.NUXEO_HTTP_PROXY_PORT);
+        var proxyLogin = Framework.getProperty(Environment.NUXEO_HTTP_PROXY_LOGIN);
+        var proxyPassword = Framework.getProperty(Environment.NUXEO_HTTP_PROXY_PASSWORD);
+
+        if (isNotBlank(proxyHost) && isNotBlank(proxyPort)) {
+            var proxy = new HttpHost(proxyHost, Integer.parseInt(proxyPort));
+            builder.setRoutePlanner(new DefaultProxyRoutePlanner(proxy));
+
+            // proxyPassword could be blank
+            if (isNotBlank(proxyLogin) && proxyPassword != null) {
+                var credentialsProvider = new BasicCredentialsProvider();
+                credentialsProvider.setCredentials(new AuthScope(proxy),
+                        new UsernamePasswordCredentials(proxyLogin, proxyPassword));
+                builder.setDefaultCredentialsProvider(credentialsProvider);
+            }
+        }
     }
 }

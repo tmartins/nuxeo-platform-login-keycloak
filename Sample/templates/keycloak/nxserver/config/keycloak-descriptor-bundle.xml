@@ -29,8 +29,8 @@
       </urlPatterns>
 
       <replacementChain>
-        <plugin>KEYCLOAK_AUTH</plugin>
         <plugin>AUTOMATION_BASIC_AUTH</plugin>
+        <plugin>KEYCLOAK_AUTH</plugin>
       </replacementChain>
     </specificAuthenticationChain>
 
@@ -46,8 +46,8 @@
       </urlPatterns>
 
       <replacementChain>
-        <plugin>KEYCLOAK_AUTH</plugin>
         <plugin>AUTOMATION_BASIC_AUTH</plugin>
+        <plugin>KEYCLOAK_AUTH</plugin>
       </replacementChain>
     </specificAuthenticationChain>
 

@@ -33,17 +33,20 @@ import java.util.UUID;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
+import org.apache.commons.lang3.StringUtils;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.keycloak.adapters.AdapterDeploymentContext;
-import org.keycloak.adapters.spi.AuthOutcome;
 import org.keycloak.adapters.KeycloakDeployment;
+import org.keycloak.adapters.spi.AuthChallenge;
+import org.keycloak.adapters.spi.AuthOutcome;
+import org.keycloak.adapters.tomcat.OIDCCatalinaHttpFacade;
 import org.keycloak.representations.AccessToken;
 import org.nuxeo.ecm.platform.api.login.UserIdentificationInfo;
 import org.nuxeo.ecm.platform.ui.web.auth.interfaces.NuxeoAuthenticationPlugin;
 import org.nuxeo.ecm.platform.ui.web.auth.interfaces.NuxeoAuthenticationPluginLogoutExtension;
 import org.nuxeo.runtime.api.Framework;
 import org.nuxeo.usermapper.service.UserMapperService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Authentication plugin for handling auth flow with Keyloack
@@ -51,10 +54,10 @@ import org.slf4j.LoggerFactory;
  * @since 7.4
  */
 
-public class KeycloakAuthenticationPlugin implements NuxeoAuthenticationPlugin,
-        NuxeoAuthenticationPluginLogoutExtension {
+public class KeycloakAuthenticationPlugin
+        implements NuxeoAuthenticationPlugin, NuxeoAuthenticationPluginLogoutExtension {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(KeycloakAuthenticationPlugin.class);
+    private static final Logger log = LogManager.getLogger(KeycloakAuthenticationPlugin.class);
 
     private static final String PROTOCOL_CLASSPATH = "classpath:";
 
@@ -66,13 +69,15 @@ public class KeycloakAuthenticationPlugin implements NuxeoAuthenticationPlugin,
 
     private String keycloakConfigFile = PROTOCOL_CLASSPATH + "keycloak.json";
 
-    private KeycloakAuthenticatorProvider keycloakAuthenticatorProvider;
+    protected KeycloakAuthenticatorProvider keycloakAuthenticatorProvider;
+
+    private ThreadLocal<KeycloakRequestAuthenticator> localKeycloakAuthenticator = new ThreadLocal<>();
 
     protected String mappingName = DEFAULT_MAPPING_NAME;
 
     @Override
     public void initPlugin(Map<String, String> parameters) {
-        LOGGER.info("INITIALIZE KEYCLOAK");
+        log.info("INITIALIZE KEYCLOAK");
 
         if (parameters.containsKey(KEYCLOAK_CONFIG_FILE_KEY)) {
             keycloakConfigFile = PROTOCOL_CLASSPATH + parameters.get(KEYCLOAK_CONFIG_FILE_KEY);
@@ -82,10 +87,14 @@ public class KeycloakAuthenticationPlugin implements NuxeoAuthenticationPlugin,
             mappingName = parameters.get(KEYCLOAK_MAPPING_NAME_KEY);
         }
 
-        InputStream is = loadKeycloakConfigFile();
-        KeycloakDeployment kd = KeycloakNuxeoDeployment.build(is);
+        KeycloakDeployment kd;
+        try (InputStream is = loadKeycloakConfigFile()) {
+            kd = KeycloakNuxeoDeployment.build(is);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
         keycloakAuthenticatorProvider = new KeycloakAuthenticatorProvider(new AdapterDeploymentContext(kd));
-        LOGGER.info("Keycloak is using a per-deployment configuration loaded from: " + keycloakConfigFile);
+        log.info("Keycloak is using a per-deployment configuration loaded from: {}", keycloakConfigFile);
     }
 
     @Override
@@ -95,7 +104,32 @@ public class KeycloakAuthenticationPlugin implements NuxeoAuthenticationPlugin,
 
     @Override
     public Boolean handleLoginPrompt(HttpServletRequest httpRequest, HttpServletResponse httpResponse, String baseURL) {
-        return Boolean.TRUE;
+        KeycloakRequestAuthenticator authenticator = localKeycloakAuthenticator.get();
+        try {
+            if (authenticator != null) {
+                AuthChallenge challenge = authenticator.getChallenge();
+                if (challenge != null) {
+                    if (authenticator.loginConfig == null) {
+                        authenticator.loginConfig = authenticator.request.getContext().getLoginConfig();
+                    }
+                    if (challenge.getResponseCode() >= 400) {
+                        if (authenticator.forwardToErrorPageInternal()) {
+                            return Boolean.TRUE;
+                        }
+                    }
+                    try {
+                        challenge.challenge(authenticator.getFacade());
+                    } catch (ClassCastException e) {
+                        log.error("Catching error during challenge for request = " + httpRequest.getRequestURL(), e);
+                        OIDCCatalinaHttpFacade f = (OIDCCatalinaHttpFacade) authenticator.getFacade();
+                        challenge.challenge(f);
+                    }
+                }
+            }
+            return Boolean.TRUE;
+        } finally {
+            localKeycloakAuthenticator.remove();
+        }
     }
 
     @Override
@@ -108,16 +142,19 @@ public class KeycloakAuthenticationPlugin implements NuxeoAuthenticationPlugin,
     @Override
     public UserIdentificationInfo handleRetrieveIdentity(HttpServletRequest httpRequest,
             HttpServletResponse httpResponse) {
-        LOGGER.debug("KEYCLOAK will handle identification");
+        log.debug("KEYCLOAK will handle identification");
 
         KeycloakRequestAuthenticator authenticator = keycloakAuthenticatorProvider.provide(httpRequest, httpResponse);
+        // need to keep the KeycloakRequestAuthenticator because it contains the challenge computed from the request
+        localKeycloakAuthenticator.set(authenticator);
         KeycloakDeployment deployment = keycloakAuthenticatorProvider.getResolvedDeployment();
         String keycloakNuxeoApp = deployment.getResourceName();
 
         AuthOutcome outcome = authenticator.authenticate();
 
         if (outcome == AuthOutcome.AUTHENTICATED) {
-            AccessToken token = (AccessToken) httpRequest.getAttribute(KeycloakRequestAuthenticator.KEYCLOAK_ACCESS_TOKEN);
+            AccessToken token = (AccessToken) httpRequest.getAttribute(
+                    KeycloakRequestAuthenticator.KEYCLOAK_ACCESS_TOKEN);
 
             KeycloakUserInfo keycloakUserInfo = getKeycloakUserInfo(token);
 
@@ -134,14 +171,14 @@ public class KeycloakAuthenticationPlugin implements NuxeoAuthenticationPlugin,
 
     @Override
     public Boolean handleLogout(HttpServletRequest httpRequest, HttpServletResponse httpResponse) {
-        LOGGER.debug("KEYCLOAK will handle logout");
+        log.debug("KEYCLOAK will handle logout");
 
         String uri = keycloakAuthenticatorProvider.logout(httpRequest, httpResponse);
         try {
             httpResponse.sendRedirect(uri);
         } catch (IOException e) {
             String message = "Could note handle logout with URI: " + uri;
-            LOGGER.error(message);
+            log.error(message);
             throw new RuntimeException(message);
         }
         return Boolean.TRUE;
@@ -155,13 +192,17 @@ public class KeycloakAuthenticationPlugin implements NuxeoAuthenticationPlugin,
      */
     private KeycloakUserInfo getKeycloakUserInfo(AccessToken token) {
         return aKeycloakUserInfo()
-        // Required
-        .withUserName(token.getEmail())
-        // Optional
-        .withFirstName(token.getGivenName()).withLastName(token.getFamilyName()).withCompany(
-                token.getPreferredUsername()).withAuthPluginName("KEYCLOAK_AUTH")
-        // The password is randomly generated has we won't use it
-        .withPassword(UUID.randomUUID().toString()).build();
+                                  // Required
+                                  .withUserName(StringUtils.isBlank(token.getEmail()) ? token.getPreferredUsername()
+                                          : token.getEmail())
+                                  // Optional
+                                  .withEmail(token.getEmail())
+                                  .withFirstName(token.getGivenName())
+                                  .withLastName(token.getFamilyName())
+                                  .withCompany(token.getZoneinfo())
+                                  // The password is randomly generated as we won't use it
+                                  .withPassword(UUID.randomUUID().toString())
+                                  .build();
     }
 
     /**
@@ -192,12 +233,13 @@ public class KeycloakAuthenticationPlugin implements NuxeoAuthenticationPlugin,
      *
      * @return the configuration file as an {@link InputStream}
      */
+    @SuppressWarnings("resource")
     private InputStream loadKeycloakConfigFile() {
 
         if (keycloakConfigFile.startsWith(PROTOCOL_CLASSPATH)) {
             String classPathLocation = keycloakConfigFile.replace(PROTOCOL_CLASSPATH, "");
 
-            LOGGER.debug("Loading config from classpath on location: " + classPathLocation);
+            log.debug("Loading config from classpath on location: {}", classPathLocation);
 
             // Try current class classloader first
             InputStream is = getClass().getClassLoader().getResourceAsStream(classPathLocation);
@@ -209,17 +251,17 @@ public class KeycloakAuthenticationPlugin implements NuxeoAuthenticationPlugin,
                 return is;
             } else {
                 String message = "Unable to find config from classpath: " + keycloakConfigFile;
-                LOGGER.error(message);
+                log.error(message);
                 throw new RuntimeException(message);
             }
         } else {
             // Fallback to file
             try {
-                LOGGER.debug("Loading config from file: " + keycloakConfigFile);
+                log.debug("Loading config from file: {}", keycloakConfigFile);
                 return new FileInputStream(keycloakConfigFile);
             } catch (FileNotFoundException fnfe) {
-                String message = "Config not found on " + keycloakConfigFile;
-                LOGGER.error(message);
+                String message = "Config not found for file: " + keycloakConfigFile;
+                log.error(message);
                 throw new RuntimeException(message, fnfe);
             }
         }

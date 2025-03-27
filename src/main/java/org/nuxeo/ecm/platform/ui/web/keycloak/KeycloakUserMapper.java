@@ -23,7 +23,10 @@ import java.io.Serializable;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.nuxeo.ecm.core.api.DocumentModel;
 import org.nuxeo.ecm.core.api.DocumentModelList;
 import org.nuxeo.ecm.core.api.NuxeoException;
@@ -34,8 +37,6 @@ import org.nuxeo.ecm.platform.api.login.UserIdentificationInfo;
 import org.nuxeo.ecm.platform.usermanager.UserManager;
 import org.nuxeo.runtime.api.Framework;
 import org.nuxeo.usermapper.extension.UserMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Plugin for the UserMapper to manage mapping between Ketcloack user and Nuxeo counterpart
@@ -44,14 +45,14 @@ import org.slf4j.LoggerFactory;
  */
 public class KeycloakUserMapper implements UserMapper {
 
-    private static final Logger log = LoggerFactory.getLogger(KeycloakUserMapper.class);
+    private static final Logger log = LogManager.getLogger(KeycloakUserMapper.class);
 
     protected static String userSchemaName = "user";
 
     protected static String groupSchemaName = "group";
 
     protected UserManager userManager;
-
+    
     private Cache keycloakCache;
 
     @Override
@@ -59,36 +60,68 @@ public class KeycloakUserMapper implements UserMapper {
         return getOrCreateAndUpdateNuxeoPrincipal(userObject, true, true, null);
     }
 
-    @Override
-    public NuxeoPrincipal getOrCreateAndUpdateNuxeoPrincipal(Object userObject, boolean createIfNeeded, boolean update,
-            Map<String, Serializable> params) {
-        return  Framework.doPrivileged(() -> {
-            KeycloakUserInfo userInfo = (KeycloakUserInfo) userObject;
-            String userId = userInfo.getUserName();
-            if (userId != null && keycloakCache.hasEntry(userId)) {
-                log.info(String.format("%s found in Keycloak cache", userId));
-                return userManager.getPrincipal(userId);
-            }
-            for (String role : userInfo.getRoles()) {
-                findOrCreateGroup(role, userInfo.getUserName());
-            }
+    private boolean cleanUserRoles(String userId, List<String> userGroups, Set<String> keycloakRoles) {
+        if (!Framework.isBooleanPropertyTrue("org.nuxeo.keycloak.roles.override")) {
+            return false;
+        } else {
+            boolean invalidatePrincipal = false;
 
-            // Remember that username is email by default
-            DocumentModel userDoc = findUser(userInfo);
-            if (userDoc == null) {
-                userDoc = createUser(userInfo);
+            for (String userGroup : userGroups) {
+                if (!keycloakRoles.contains(userGroup)) {
+                    DocumentModel groupDoc = findGroup(userGroup);
+                    List<String> users = userManager.getUsersInGroupAndSubGroups(userGroup);
+                    users.remove(userId);
+                    groupDoc.setProperty(groupSchemaName, userManager.getGroupMembersField(), users);
+                    userManager.updateGroup(groupDoc);
+                    invalidatePrincipal = true;
+                }
             }
 
-            updateUser(userDoc, userInfo);
-
-            userId = (String) userDoc.getPropertyValue(userManager.getUserIdField());
-            NuxeoPrincipal principal = userManager.getPrincipal(userId);
-            keycloakCache.put(userId, principal);
-            return principal;
-        });
+            if (invalidatePrincipal) {
+                userManager.notifyUserChanged(userId, (String) null);
+                return true;
+            } else {
+                return false;
+            }
+        }
     }
+    
+     @Override
+     public NuxeoPrincipal getOrCreateAndUpdateNuxeoPrincipal(Object userObject, boolean createIfNeeded, boolean update,
+             Map<String, Serializable> params) {
+         return Framework.doPrivileged(() -> {
+             KeycloakUserInfo userInfo = (KeycloakUserInfo) userObject;
+             String userId = userInfo.getUserName();
+             if (userId != null && keycloakCache.hasEntry(userId)) {
+                 log.info(String.format("%s found in Keycloak cache", userId));
+                 if (cleanUserRoles(userId, ((NuxeoPrincipal) keycloakCache.get(userId)).getGroups(),
+                         userInfo.getRoles())) {
+                     keycloakCache.put(userId, userManager.getPrincipal(userId));
+                 }
+                 return (NuxeoPrincipal) keycloakCache.get(userId);
+             } else {
+                 for (String role : userInfo.getRoles()) {
+                     findOrCreateGroup(role, userInfo.getUserName());
+                 }
 
-    @SuppressWarnings("deprecation")
+                 // Remember that username is email by default
+                 DocumentModel userDoc = findUser(userInfo);
+                 if (userDoc == null) {
+                     userDoc = createUser(userInfo);
+                 }
+
+                 updateUser(userDoc, userInfo);
+
+                 userId = (String) userDoc.getPropertyValue(userManager.getUserIdField());
+                 cleanUserRoles(userId, userManager.getPrincipal(userId).getGroups(),
+                         userInfo.getRoles());
+                 NuxeoPrincipal principal = userManager.getPrincipal(userId);
+                 keycloakCache.put(userId, principal);
+                 return principal;
+             }
+         });
+     }
+
     @Override
     public void init(Map<String, String> params) throws Exception {
         userManager = Framework.getService(UserManager.class);
@@ -119,18 +152,32 @@ public class KeycloakUserMapper implements UserMapper {
     }
 
     private DocumentModel findGroup(String role) {
-        return userManager.getGroupModel(role);
+        Map<String, Serializable> query = new HashMap<>();
+        query.put(userManager.getGroupIdField(), role);
+        DocumentModelList groups = userManager.searchGroups(query, null);
+
+        if (groups.isEmpty()) {
+            return null;
+        }
+        return groups.get(0);
     }
 
     private DocumentModel findUser(UserIdentificationInfo userInfo) {
-        return userManager.getUserModel(userInfo.getUserName());
+        Map<String, Serializable> query = new HashMap<>();
+        query.put(userManager.getUserIdField(), userInfo.getUserName());
+        DocumentModelList users = userManager.searchUsers(query, null);
+
+        if (users.isEmpty()) {
+            return null;
+        }
+        return users.get(0);
     }
 
     private DocumentModel createUser(KeycloakUserInfo userInfo) {
         try {
             DocumentModel userDoc = userManager.getBareUserModel();
             userDoc.setPropertyValue(userManager.getUserIdField(), userInfo.getUserName());
-            userDoc.setPropertyValue(userManager.getUserEmailField(), userInfo.getUserName());
+            userDoc.setPropertyValue(userManager.getUserEmailField(), userInfo.getEmail());
             return userManager.createUser(userDoc);
         } catch (NuxeoException e) {
             String message = "Error while creating user [" + userInfo.getUserName() + "] in UserManager";
@@ -141,7 +188,7 @@ public class KeycloakUserMapper implements UserMapper {
 
     private void updateUser(DocumentModel userDoc, KeycloakUserInfo userInfo) {
         userDoc.setPropertyValue(userManager.getUserIdField(), userInfo.getUserName());
-        userDoc.setPropertyValue(userManager.getUserEmailField(), userInfo.getUserName());
+        userDoc.setPropertyValue(userManager.getUserEmailField(), userInfo.getEmail());
         userDoc.setProperty(userSchemaName, "firstName", userInfo.getFirstName());
         userDoc.setProperty(userSchemaName, "lastName", userInfo.getLastName());
         userDoc.setProperty(userSchemaName, "password", userInfo.getPassword());
@@ -150,7 +197,8 @@ public class KeycloakUserMapper implements UserMapper {
     }
 
     @Override
-    public Object wrapNuxeoPrincipal(NuxeoPrincipal principal, Object nativePrincipal, Map<String, Serializable> params) {
+    public Object wrapNuxeoPrincipal(NuxeoPrincipal principal, Object nativePrincipal,
+            Map<String, Serializable> params) {
         throw new UnsupportedOperationException();
     }
 

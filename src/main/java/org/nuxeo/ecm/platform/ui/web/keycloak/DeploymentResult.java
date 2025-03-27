@@ -19,17 +19,18 @@
 
 package org.nuxeo.ecm.platform.ui.web.keycloak;
 
-import java.lang.reflect.Field;
-
+import javax.servlet.ServletRequest;
 import javax.servlet.ServletRequestWrapper;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
 import org.apache.catalina.connector.Request;
 import org.apache.catalina.connector.RequestFacade;
+import org.apache.commons.lang3.reflect.FieldUtils;
 import org.keycloak.adapters.AdapterDeploymentContext;
 import org.keycloak.adapters.KeycloakDeployment;
 import org.keycloak.adapters.tomcat.CatalinaHttpFacade;
+import org.keycloak.adapters.tomcat.OIDCCatalinaHttpFacade;
 
 /**
  *
@@ -71,7 +72,7 @@ public class DeploymentResult {
 
         // In Tomcat, a HttpServletRequest and a HttpServletResponse are wrapped in a Facades or ApplicationHttpRequest
         request = unwrapRequest(httpServletRequest);
-        facade = new CatalinaHttpFacade(httpServletResponse, request);
+        facade = new OIDCCatalinaHttpFacade(request, httpServletResponse);
 
         if (keycloakDeployment == null) {
             keycloakDeployment = deploymentContext.resolveDeployment(facade);
@@ -85,36 +86,23 @@ public class DeploymentResult {
     }
 
     /**
-     * Get the wrapper {@link Request} hidden in a {@link RequestFacade} object
+     * Get the wrapper {@link Request} hidden in a {@link HttpServletRequest} or in {@link RequestFacade} object
      *
-     * @param requestFacade, the main RequestFacade object
-     * @return the wrapper {@link Request} in {@link RequestFacade}
+     * @param httpRequest, the HTTP request
+     * @return the wrapper {@link Request} in {@link HttpServletRequest}
+     * @since 2021.36
      */
-    private Request unwrapRequest(RequestFacade requestFacade) {
-        try {
-            Field f = requestFacade.getClass().getDeclaredField("request");
-            f.setAccessible(true); // grant access to (protected) field
-            return (Request) f.get(requestFacade);
-        } catch (NoSuchFieldException | IllegalAccessException e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    private Request unwrapRequest(HttpServletRequest httpRequest) {
-        if (httpRequest instanceof RequestFacade) {
-            return unwrapRequest((RequestFacade) httpRequest);
-        }
-        if (httpRequest instanceof ServletRequestWrapper) {
-            Field f;
+    private Request unwrapRequest(ServletRequest servletRequest) {
+        if (servletRequest instanceof RequestFacade) {
             try {
-                f = ServletRequestWrapper.class.getDeclaredField("request");
-                f.setAccessible(true); // grant access to (protected) field
-                RequestFacade facade = (RequestFacade) f.get(httpRequest);
-                return unwrapRequest(facade);
-            } catch (NoSuchFieldException | SecurityException | IllegalArgumentException | IllegalAccessException e) {
+                return (Request) FieldUtils.readField(servletRequest, "request", true);
+            } catch (ReflectiveOperationException e) {
                 throw new RuntimeException(e);
             }
         }
-        throw new RuntimeException("Non supported object to unwrap the request:" + httpRequest);
+        if (servletRequest instanceof ServletRequestWrapper srw) {
+            return unwrapRequest(srw.getRequest());
+        }
+        throw new RuntimeException("Non supported object to unwrap the request:" + servletRequest);
     }
 }

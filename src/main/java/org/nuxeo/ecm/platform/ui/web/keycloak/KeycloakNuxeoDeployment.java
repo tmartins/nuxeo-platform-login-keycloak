@@ -22,13 +22,14 @@ package org.nuxeo.ecm.platform.ui.web.keycloak;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Constructor;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import org.apache.commons.lang3.reflect.MethodUtils;
 import org.keycloak.adapters.KeycloakDeployment;
 import org.keycloak.adapters.KeycloakDeploymentBuilder;
+import org.keycloak.common.crypto.CryptoIntegration;
+import org.keycloak.crypto.def.DefaultCryptoProvider;
 import org.keycloak.representations.adapters.config.AdapterConfig;
 import org.keycloak.util.SystemPropertiesJsonParserFactory;
 
@@ -57,11 +58,9 @@ public class KeycloakNuxeoDeployment {
             Constructor<KeycloakDeploymentBuilder> constructor = KeycloakDeploymentBuilder.class.getDeclaredConstructor();
             constructor.setAccessible(true);
             KeycloakDeploymentBuilder builder = constructor.newInstance();
-
-            Method method = KeycloakDeploymentBuilder.class.getDeclaredMethod("internalBuild", AdapterConfig.class);
-            method.setAccessible(true);
-            return (KeycloakDeployment) method.invoke(builder, adapterConfig);
-        } catch (InvocationTargetException | InstantiationException | IllegalAccessException | NoSuchMethodException e) {
+            CryptoIntegration.init(DefaultCryptoProvider.class.getClassLoader());
+            return (KeycloakDeployment) MethodUtils.invokeMethod(builder, true, "internalBuild", adapterConfig);
+        } catch (ReflectiveOperationException e) {
             throw new RuntimeException(e);
         }
     }
