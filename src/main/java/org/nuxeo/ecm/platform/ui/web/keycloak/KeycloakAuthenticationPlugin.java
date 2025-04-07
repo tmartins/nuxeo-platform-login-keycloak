@@ -193,8 +193,7 @@ public class KeycloakAuthenticationPlugin
     private KeycloakUserInfo getKeycloakUserInfo(AccessToken token) {
         return aKeycloakUserInfo()
                                   // Required
-                                  .withUserName(StringUtils.isBlank(token.getEmail()) ? token.getPreferredUsername()
-                                          : token.getEmail())
+                                  .withUserName(token.getPreferredUsername())
                                   // Optional
                                   .withEmail(token.getEmail())
                                   .withFirstName(token.getGivenName())
@@ -225,6 +224,7 @@ public class KeycloakAuthenticationPlugin
             Set<String> nuxeoRoles = nuxeoResource.getRoles();
             allRoles.addAll(nuxeoRoles);
         }
+        log.error("Roles for '" + token.getPreferredUsername() + "' = " + allRoles.toString());
         return allRoles;
     }
 
