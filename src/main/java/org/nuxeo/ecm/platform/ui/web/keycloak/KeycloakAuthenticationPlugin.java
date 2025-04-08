@@ -193,8 +193,7 @@ public class KeycloakAuthenticationPlugin
     private KeycloakUserInfo getKeycloakUserInfo(AccessToken token) {
         return aKeycloakUserInfo()
                                   // Required
-                                  .withUserName(StringUtils.isBlank(token.getEmail()) ? token.getPreferredUsername()
-                                          : token.getEmail())
+                                  .withUserName(token.getPreferredUsername())
                                   // Optional
                                   .withEmail(token.getEmail())
                                   .withFirstName(token.getGivenName())
