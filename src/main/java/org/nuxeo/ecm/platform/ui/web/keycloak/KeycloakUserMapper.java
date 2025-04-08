@@ -39,7 +39,7 @@ import org.nuxeo.runtime.api.Framework;
 import org.nuxeo.usermapper.extension.UserMapper;
 
 /**
- * Plugin for the UserMapper to manage mapping between Ketcloack user and Nuxeo counterpart
+ * Plugin for the UserMapper to manage mapping between Keycloack user and Nuxeo counterpart
  *
  * @since 7.4
  */
@@ -61,11 +61,8 @@ public class KeycloakUserMapper implements UserMapper {
     }
 
     private boolean cleanUserRoles(String userId, List<String> userGroups, Set<String> keycloakRoles) {
-        log.error("clean user roles for: " + userId);
-        log.error("  user groups = " + userGroups);
-        log.error("  keycloak roles = " + keycloakRoles);
         if (!Framework.isBooleanPropertyTrue("org.nuxeo.keycloak.roles.override")) {
-            log.error("cleaning roles is disabled");
+            log.debug("cleaning roles is disabled");
             return false;
         } else {
             boolean invalidatePrincipal = false;
@@ -78,7 +75,6 @@ public class KeycloakUserMapper implements UserMapper {
                     users.remove(userId);
                     groupDoc.setProperty(groupSchemaName, userManager.getGroupMembersField(), users);
                     userManager.updateGroup(groupDoc);
-                    log.error("  => remove user from group: " + userGroup);
                     invalidatePrincipal = true;
                 }
             }
@@ -134,7 +130,6 @@ public class KeycloakUserMapper implements UserMapper {
                  updateUser(userDoc, userInfo);
 
                  for (String role : userInfo.getRoles()) {
-                     log.error("Check role: " + role);
                      findOrCreateGroup(role, userInfo.getUserName());
                  }
 
@@ -161,7 +156,6 @@ public class KeycloakUserMapper implements UserMapper {
         DocumentModel groupDoc = findGroup(role);
         boolean invalidatePrincipal = false;
         if (groupDoc == null) {
-            log.error("Group does not exist => create it : " + role);
             groupDoc = userManager.getBareGroupModel();
             groupDoc.setPropertyValue(userManager.getGroupIdField(), role);
             groupDoc.setProperty(groupSchemaName, "groupname", role);
@@ -172,14 +166,10 @@ public class KeycloakUserMapper implements UserMapper {
         }
 //        List<String> users = userManager.getUsersInGroupAndSubGroups(role);
         List<String> users = userManager.getUsersInGroup(role);
-        log.error("Users in group = " + users);
         if (!users.contains(userName)) {
             users.add(userName);
-            log.error("  adding '" + userName + "' to " + role);
             groupDoc.setProperty(groupSchemaName, userManager.getGroupMembersField(), users);
-            log.error("users before update = " + groupDoc.getPropertyValue(groupSchemaName + ":" + userManager.getGroupMembersField()));
             userManager.updateGroup(groupDoc);
-            log.error("users after update = " + userManager.getGroup(role).getMemberUsers());
             invalidatePrincipal = true;
         }
 
@@ -202,7 +192,6 @@ public class KeycloakUserMapper implements UserMapper {
 
     private DocumentModel findUser(UserIdentificationInfo userInfo) {
         Map<String, Serializable> query = new HashMap<>();
-        log.error("Trying to find user: " + userManager.getUserIdField() + "=" + userInfo.getUserName());
         query.put(userManager.getUserIdField(), userInfo.getUserName());
         DocumentModelList users = userManager.searchUsers(query, null);
 
@@ -214,7 +203,6 @@ public class KeycloakUserMapper implements UserMapper {
 
     private DocumentModel createUser(KeycloakUserInfo userInfo) {
         try {
-            log.error("create user = " + userInfo.getUserName());
             DocumentModel userDoc = userManager.getBareUserModel();
             userDoc.setPropertyValue(userManager.getUserIdField(), userInfo.getUserName());
             userDoc.setPropertyValue(userManager.getUserEmailField(), userInfo.getEmail());

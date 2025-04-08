@@ -224,7 +224,6 @@ public class KeycloakAuthenticationPlugin
             Set<String> nuxeoRoles = nuxeoResource.getRoles();
             allRoles.addAll(nuxeoRoles);
         }
-        log.error("Roles for '" + token.getPreferredUsername() + "' = " + allRoles.toString());
         return allRoles;
     }
 
