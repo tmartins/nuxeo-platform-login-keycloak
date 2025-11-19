@@ -203,17 +203,25 @@ public class TestKeycloakAuthenticationPlugin {
         initPlugin(keycloakAuthenticationPlugin);
 
         KeycloakUriBuilder builder = KeycloakUriBuilder.fromUri(KEYCLOAK_URL + "logout");
-        String logoutUri = keycloakAuthenticationPlugin.keycloakAuthenticatorProvider.logoutQueryParam(builder,
+        String logoutUri = keycloakAuthenticationPlugin.keycloakAuthenticatorProvider.logoutQueryParam(builder, null,
                 "https://example.com/foo/home.html", "wink").build().toString();
         assertEquals(KEYCLOAK_URL
                 + "logout?post_logout_redirect_uri=https%3A%2F%2Fexample.com%2Ffoo%2Fhome.html&id_token_hint=wink",
                 logoutUri);
 
         // simulate logout a second time
-        logoutUri = keycloakAuthenticationPlugin.keycloakAuthenticatorProvider.logoutQueryParam(builder,
+        logoutUri = keycloakAuthenticationPlugin.keycloakAuthenticatorProvider.logoutQueryParam(builder, null,
                 "https://example.com/foo/home.html", "wink").build().toString();
         assertEquals(KEYCLOAK_URL
                 + "logout?post_logout_redirect_uri=https%3A%2F%2Fexample.com%2Ffoo%2Fhome.html&id_token_hint=wink",
+                logoutUri);
+
+        // logout without token hint (client authentication disabled)
+        builder = KeycloakUriBuilder.fromUri(KEYCLOAK_URL + "logout");
+        logoutUri = keycloakAuthenticationPlugin.keycloakAuthenticatorProvider.logoutQueryParam(builder,
+                "customer-portal", "https://example.com/foo/home.html", null).build().toString();
+        assertEquals(KEYCLOAK_URL
+                + "logout?client_id=customer-portal&post_logout_redirect_uri=https%3A%2F%2Fexample.com%2Ffoo%2Fhome.html",
                 logoutUri);
     }
 
@@ -255,3 +263,4 @@ public class TestKeycloakAuthenticationPlugin {
         assertEquals("username@example.com", identity.getUserName());
     }
 }
+

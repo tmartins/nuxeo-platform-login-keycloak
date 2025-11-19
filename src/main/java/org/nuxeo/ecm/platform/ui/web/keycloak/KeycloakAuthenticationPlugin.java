@@ -71,7 +71,7 @@ public class KeycloakAuthenticationPlugin
 
     protected KeycloakAuthenticatorProvider keycloakAuthenticatorProvider;
 
-    private ThreadLocal<KeycloakRequestAuthenticator> localKeycloakAuthenticator = new ThreadLocal<>();
+    protected ThreadLocal<KeycloakRequestAuthenticator> localKeycloakAuthenticator = new ThreadLocal<>();
 
     protected String mappingName = DEFAULT_MAPPING_NAME;
 
@@ -93,8 +93,12 @@ public class KeycloakAuthenticationPlugin
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
-        keycloakAuthenticatorProvider = new KeycloakAuthenticatorProvider(new AdapterDeploymentContext(kd));
+        keycloakAuthenticatorProvider = createAuthenticationProvider(new AdapterDeploymentContext(kd));
         log.info("Keycloak is using a per-deployment configuration loaded from: {}", keycloakConfigFile);
+    }
+
+    protected KeycloakAuthenticatorProvider createAuthenticationProvider(AdapterDeploymentContext kdc) {
+        return new KeycloakAuthenticatorProvider(kdc);
     }
 
     @Override
@@ -190,7 +194,7 @@ public class KeycloakAuthenticationPlugin
      * @param token the keycoak authentication token
      * @return keycloak user's information
      */
-    private KeycloakUserInfo getKeycloakUserInfo(AccessToken token) {
+    protected KeycloakUserInfo getKeycloakUserInfo(AccessToken token) {
         return aKeycloakUserInfo()
                                   // Required
                                   .withUserName(token.getPreferredUsername())
@@ -211,7 +215,7 @@ public class KeycloakAuthenticationPlugin
      * @param keycloakNuxeoApp the keycoak resource name
      * @return keycloak user's roles
      */
-    private Set<String> getRoles(AccessToken token, String keycloakNuxeoApp) {
+    protected Set<String> getRoles(AccessToken token, String keycloakNuxeoApp) {
         Set<String> allRoles = new HashSet<>();
 
         AccessToken.Access realmAccess = token.getRealmAccess();
